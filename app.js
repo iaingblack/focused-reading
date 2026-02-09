@@ -23,7 +23,7 @@ const state = {
   timer: null,
   voiceMode: 'off',   // 'off' | 'browser' | 'piper'
   selectedVoice: null,
-  piperVoiceId: 'en_US-hfc_female-medium',
+  piperVoiceId: 'en_US-amy-medium',
   piperReady: false,   // true when current voice is downloaded and ready
   piperAudio: null,
   piperWordTimer: null,
@@ -292,6 +292,12 @@ async function updatePiperDownloadBtn() {
     piperDownloadBtn.textContent = isDownloaded ? 'Ready' : 'Download Voice';
     piperDownloadBtn.classList.toggle('ready', isDownloaded);
     piperDownloadBtn.disabled = isDownloaded;
+
+    // Update dropdown labels with download status
+    for (const opt of piperVoiceSelect.options) {
+      const label = opt.dataset.label;
+      opt.textContent = stored.includes(opt.value) ? `${label} \u2713` : label;
+    }
   } catch (err) {
     piperDownloadBtn.textContent = 'Error loading';
     piperDownloadBtn.disabled = true;
