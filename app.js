@@ -349,6 +349,22 @@ async function downloadPiperVoice() {
   }
 }
 
+// Prefetch cache for next sentence audio
+let piperPrefetch = null;
+
+function piperPrefetchNext(tts, chapter, nextWordStart) {
+  if (nextWordStart >= chapter.words.length) {
+    piperPrefetch = null;
+    return;
+  }
+  const { text, wordCount } = collectSentence(chapter, nextWordStart);
+  piperPrefetch = {
+    wordStart: nextWordStart,
+    wordCount,
+    promise: tts.predict({ text, voiceId: state.piperVoiceId }),
+  };
+}
+
 async function piperVoicePlay() {
   if (!state.playing || state.voiceMode !== 'piper') return;
   state.piperAbort = false;
@@ -369,6 +385,7 @@ async function piperVoicePlay() {
       state.currentChapter++;
       state.currentWord = 0;
       renderChapterList();
+      piperPrefetch = null;
       piperVoicePlay();
       return;
     } else {
@@ -383,9 +400,21 @@ async function piperVoicePlay() {
 
   try {
     const tts = await loadPiperModule();
-    const wav = await tts.predict({ text, voiceId: state.piperVoiceId });
+
+    // Use prefetched audio if available and matches, otherwise generate
+    let wav;
+    if (piperPrefetch && piperPrefetch.wordStart === sentenceStartWord) {
+      wav = await piperPrefetch.promise;
+      piperPrefetch = null;
+    } else {
+      piperPrefetch = null;
+      wav = await tts.predict({ text, voiceId: state.piperVoiceId });
+    }
 
     if (state.piperAbort || !state.playing) return;
+
+    // Start prefetching the next sentence while this one plays
+    piperPrefetchNext(tts, chapter, sentenceStartWord + wordCount);
 
     const blobUrl = URL.createObjectURL(wav);
     const audio = new Audio(blobUrl);
@@ -437,6 +466,7 @@ async function piperVoicePlay() {
 
 function piperVoiceStop() {
   state.piperAbort = true;
+  piperPrefetch = null;
   clearInterval(state.piperWordTimer);
   state.piperWordTimer = null;
   if (state.piperAudio) {
