@@ -1,3 +1,17 @@
+// ── Piper TTS (lazy-loaded ES module) ──
+let piperTts = null;
+async function loadPiperModule() {
+  if (piperTts) return piperTts;
+  try {
+    piperTts = await import('https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/dist/piper-tts-web.js');
+    console.log('Piper TTS module loaded successfully');
+    return piperTts;
+  } catch (err) {
+    console.error('Failed to load Piper TTS module:', err);
+    throw new Error('Could not load Piper TTS library. Make sure you are serving over HTTPS or localhost.');
+  }
+}
+
 // ── State ──
 const state = {
   books: [],          // { id, title, author, cover, chapters: [{ title, words }], totalWords }
@@ -7,8 +21,13 @@ const state = {
   wpm: 300,
   playing: false,
   timer: null,
-  voiceEnabled: false,
+  voiceMode: 'off',   // 'off' | 'browser' | 'piper'
   selectedVoice: null,
+  piperVoiceId: 'en_US-hfc_female-medium',
+  piperReady: false,   // true when current voice is downloaded and ready
+  piperAudio: null,
+  piperWordTimer: null,
+  piperAbort: false,
 };
 
 // ── DOM refs ──
@@ -31,8 +50,14 @@ const bookInfo = $('#book-info');
 const sidebar = $('#sidebar');
 const toggleSidebarBtn = $('#toggle-sidebar');
 const backBtn = $('#back-to-library');
-const voiceToggle = $('#voice-toggle');
 const voiceSelect = $('#voice-select');
+const piperVoiceSelect = $('#piper-voice-select');
+const piperControls = $('#piper-controls');
+const piperDownloadBtn = $('#piper-download-btn');
+const piperStatus = $('#piper-status');
+const piperProgressFill = $('#piper-progress-fill');
+const piperStatusText = $('#piper-status-text');
+const voiceModeBtns = document.querySelectorAll('.voice-mode-btn');
 
 // ── IndexedDB Storage ──
 const DB_NAME = 'focused_reading';
@@ -133,13 +158,12 @@ async function loadReadingPosition(id) {
   return await dbGet('positions', id);
 }
 
-// ── Voice (Web Speech API) ──
+// ── Browser Voice (Web Speech API) ──
 const synth = window.speechSynthesis;
 
 function populateVoices() {
   const voices = synth.getVoices();
   voiceSelect.innerHTML = '';
-  // Prefer English voices, put them first
   const english = voices.filter(v => v.lang.startsWith('en'));
   const others = voices.filter(v => !v.lang.startsWith('en'));
   const sorted = [...english, ...others];
@@ -150,7 +174,6 @@ function populateVoices() {
     if (voice.default) opt.selected = true;
     voiceSelect.appendChild(opt);
   });
-  // Default to first English voice
   if (english.length > 0 && !state.selectedVoice) {
     state.selectedVoice = english[0];
   }
@@ -165,15 +188,11 @@ function getSelectedVoice() {
   return voices.find(v => v.name === name) || voices[0] || null;
 }
 
-// Map WPM to speech rate. Normal speech ~150 WPM = rate 1.0
-// SpeechSynthesis rate range: 0.1 to 10
 function wpmToRate(wpm) {
   return Math.max(0.5, Math.min(4, wpm / 160));
 }
 
 // Build a sentence string from chapter words starting at wordIndex.
-// Returns { text, wordCount } — collects words until sentence-ending punctuation
-// or a max of ~40 words for manageable chunks.
 function collectSentence(chapter, startWord) {
   const words = chapter.words;
   let end = startWord;
@@ -188,22 +207,20 @@ function collectSentence(chapter, startWord) {
   return { text: sentenceWords.join(' '), wordCount: sentenceWords.length };
 }
 
-// Speak from the current position, sentence by sentence.
-// Uses boundary events to sync the visual word display.
-function voicePlay() {
-  if (!state.playing || !state.voiceEnabled) return;
+// ── Browser Voice Playback ──
+function browserVoicePlay() {
+  if (!state.playing || state.voiceMode !== 'browser') return;
   const book = state.currentBook;
   if (!book) return;
   const chapter = book.chapters[state.currentChapter];
   if (!chapter) return;
 
   if (state.currentWord >= chapter.words.length) {
-    // Move to next chapter
     if (state.currentChapter < book.chapters.length - 1) {
       state.currentChapter++;
       state.currentWord = 0;
       renderChapterList();
-      voicePlay();
+      browserVoicePlay();
       return;
     } else {
       stop();
@@ -219,7 +236,6 @@ function voicePlay() {
   utterance.voice = getSelectedVoice();
   utterance.rate = wpmToRate(state.wpm);
 
-  // Track word position within the sentence via boundary events
   let wordBoundaryIndex = 0;
   utterance.onboundary = (e) => {
     if (e.name === 'word') {
@@ -231,11 +247,9 @@ function voicePlay() {
 
   utterance.onend = () => {
     if (!state.playing) return;
-    // Advance past this sentence
     state.currentWord = sentenceStartWord + wordCount;
     showCurrentWord();
-    // Speak next sentence
-    voicePlay();
+    browserVoicePlay();
   };
 
   utterance.onerror = (e) => {
@@ -247,8 +261,218 @@ function voicePlay() {
   synth.speak(utterance);
 }
 
-function voiceStop() {
+function browserVoiceStop() {
   synth.cancel();
+}
+
+// ── Piper TTS Playback ──
+function piperPlaybackRate() {
+  return Math.max(0.5, Math.min(3, state.wpm / 150));
+}
+
+function showPiperStatus(msg, pct) {
+  piperStatus.classList.remove('hidden');
+  piperStatusText.textContent = msg;
+  if (pct !== undefined) {
+    piperProgressFill.style.width = pct + '%';
+  }
+}
+
+function hidePiperStatus() {
+  piperStatus.classList.add('hidden');
+  piperProgressFill.style.width = '0%';
+}
+
+async function updatePiperDownloadBtn() {
+  try {
+    const tts = await loadPiperModule();
+    const stored = await tts.stored();
+    const isDownloaded = stored.includes(state.piperVoiceId);
+    state.piperReady = isDownloaded;
+    piperDownloadBtn.textContent = isDownloaded ? 'Ready' : 'Download Voice';
+    piperDownloadBtn.classList.toggle('ready', isDownloaded);
+    piperDownloadBtn.disabled = isDownloaded;
+  } catch (err) {
+    piperDownloadBtn.textContent = 'Error loading';
+    piperDownloadBtn.disabled = true;
+    state.piperReady = false;
+  }
+}
+
+async function downloadPiperVoice() {
+  piperDownloadBtn.disabled = true;
+  piperDownloadBtn.textContent = 'Downloading...';
+  showPiperStatus('Loading Piper engine...', 0);
+
+  try {
+    const tts = await loadPiperModule();
+    showPiperStatus('Downloading voice model...', 0);
+
+    await tts.download(state.piperVoiceId, (progress) => {
+      if (progress.total) {
+        const pct = Math.round((progress.loaded / progress.total) * 100);
+        const sizeMB = (progress.total / 1024 / 1024).toFixed(0);
+        const loadedMB = (progress.loaded / 1024 / 1024).toFixed(0);
+        showPiperStatus(`Downloading: ${loadedMB}/${sizeMB} MB`, pct);
+      }
+    });
+
+    state.piperReady = true;
+    piperDownloadBtn.textContent = 'Ready';
+    piperDownloadBtn.classList.add('ready');
+    piperDownloadBtn.disabled = true;
+    showPiperStatus('Voice ready!', 100);
+    setTimeout(hidePiperStatus, 2000);
+  } catch (err) {
+    console.error('Piper download error:', err);
+    piperDownloadBtn.textContent = 'Retry Download';
+    piperDownloadBtn.disabled = false;
+    showPiperStatus('Download failed: ' + err.message, 0);
+    state.piperReady = false;
+  }
+}
+
+async function piperVoicePlay() {
+  if (!state.playing || state.voiceMode !== 'piper') return;
+  state.piperAbort = false;
+
+  if (!state.piperReady) {
+    showPiperStatus('Voice not downloaded. Click "Download Voice" first.', 0);
+    stop();
+    return;
+  }
+
+  const book = state.currentBook;
+  if (!book) return;
+  const chapter = book.chapters[state.currentChapter];
+  if (!chapter) return;
+
+  if (state.currentWord >= chapter.words.length) {
+    if (state.currentChapter < book.chapters.length - 1) {
+      state.currentChapter++;
+      state.currentWord = 0;
+      renderChapterList();
+      piperVoicePlay();
+      return;
+    } else {
+      stop();
+      wordEl.textContent = '\u2014 End \u2014';
+      return;
+    }
+  }
+
+  const { text, wordCount } = collectSentence(chapter, state.currentWord);
+  const sentenceStartWord = state.currentWord;
+
+  try {
+    const tts = await loadPiperModule();
+    const wav = await tts.predict({ text, voiceId: state.piperVoiceId });
+
+    if (state.piperAbort || !state.playing) return;
+
+    const blobUrl = URL.createObjectURL(wav);
+    const audio = new Audio(blobUrl);
+    audio.playbackRate = piperPlaybackRate();
+    state.piperAudio = audio;
+
+    await new Promise((resolve, reject) => {
+      audio.addEventListener('loadedmetadata', () => {
+        const duration = audio.duration / audio.playbackRate;
+        const interval = (duration / wordCount) * 1000;
+        let wordIdx = 0;
+
+        state.piperWordTimer = setInterval(() => {
+          if (wordIdx < wordCount) {
+            state.currentWord = sentenceStartWord + wordIdx;
+            showCurrentWord();
+            wordIdx++;
+          }
+        }, interval);
+      });
+
+      audio.addEventListener('ended', () => {
+        clearInterval(state.piperWordTimer);
+        state.piperWordTimer = null;
+        URL.revokeObjectURL(blobUrl);
+        resolve();
+      });
+
+      audio.addEventListener('error', (e) => {
+        clearInterval(state.piperWordTimer);
+        URL.revokeObjectURL(blobUrl);
+        reject(new Error('Audio playback error'));
+      });
+
+      audio.play().catch(reject);
+    });
+
+    if (!state.playing || state.piperAbort) return;
+    state.currentWord = sentenceStartWord + wordCount;
+    showCurrentWord();
+    piperVoicePlay();
+  } catch (err) {
+    if (state.piperAbort) return;
+    console.error('Piper TTS error:', err);
+    showPiperStatus('Speech error: ' + err.message, 0);
+    stop();
+  }
+}
+
+function piperVoiceStop() {
+  state.piperAbort = true;
+  clearInterval(state.piperWordTimer);
+  state.piperWordTimer = null;
+  if (state.piperAudio) {
+    state.piperAudio.pause();
+    state.piperAudio.src = '';
+    state.piperAudio = null;
+  }
+}
+
+// ── Voice mode helpers ──
+function voicePlay() {
+  if (state.voiceMode === 'browser') browserVoicePlay();
+  else if (state.voiceMode === 'piper') piperVoicePlay();
+}
+
+function voiceStop() {
+  browserVoiceStop();
+  piperVoiceStop();
+}
+
+function isVoiceActive() {
+  return state.voiceMode !== 'off';
+}
+
+function setVoiceMode(mode) {
+  const wasPlaying = state.playing;
+  if (wasPlaying) {
+    if (state.voiceMode === 'browser') { clearTimeout(state.timer); browserVoiceStop(); }
+    else if (state.voiceMode === 'piper') piperVoiceStop();
+    else clearTimeout(state.timer);
+  }
+
+  state.voiceMode = mode;
+
+  // Update UI buttons
+  voiceModeBtns.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+
+  // Show/hide dropdowns
+  voiceSelect.classList.toggle('hidden', mode !== 'browser');
+  piperControls.classList.toggle('hidden', mode !== 'piper');
+
+  if (mode === 'piper') {
+    updatePiperDownloadBtn();
+  } else {
+    hidePiperStatus();
+  }
+
+  if (wasPlaying) {
+    if (mode === 'off') tick();
+    else voicePlay();
+  }
 }
 
 // ── EPUB Parsing ──
@@ -523,11 +747,23 @@ function seekToGlobalIndex(targetIdx) {
   showCurrentWord();
 }
 
+// Unlock audio playback on user gesture so async TTS can play later
+function unlockAudio() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = ctx.createBuffer(1, 1, 22050);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  src.start(0);
+  ctx.resume();
+}
+
 function play() {
   if (state.playing) return;
+  unlockAudio();
   state.playing = true;
   updatePlayButton();
-  if (state.voiceEnabled) {
+  if (isVoiceActive()) {
     voicePlay();
   } else {
     tick();
@@ -543,7 +779,7 @@ function stop() {
 }
 
 function tick() {
-  if (!state.playing || state.voiceEnabled) return;
+  if (!state.playing || isVoiceActive()) return;
   state.currentWord++;
   showCurrentWord();
   const delay = 60000 / state.wpm;
@@ -555,7 +791,7 @@ function updatePlayButton() {
 }
 
 function skipForward() {
-  if (state.voiceEnabled && state.playing) voiceStop();
+  if (isVoiceActive() && state.playing) voiceStop();
   const chapter = state.currentBook.chapters[state.currentChapter];
   let target = state.currentWord;
   let found = false;
@@ -569,11 +805,11 @@ function skipForward() {
   if (!found) target = Math.min(state.currentWord + 10, chapter.words.length - 1);
   state.currentWord = target;
   showCurrentWord();
-  if (state.voiceEnabled && state.playing) voicePlay();
+  if (isVoiceActive() && state.playing) voicePlay();
 }
 
 function skipBackward() {
-  if (state.voiceEnabled && state.playing) voiceStop();
+  if (isVoiceActive() && state.playing) voiceStop();
   const chapter = state.currentBook.chapters[state.currentChapter];
   let target = state.currentWord;
   let found = false;
@@ -587,7 +823,7 @@ function skipBackward() {
   if (!found) target = Math.max(0, state.currentWord - 10);
   state.currentWord = target;
   showCurrentWord();
-  if (state.voiceEnabled && state.playing) voicePlay();
+  if (isVoiceActive() && state.playing) voicePlay();
 }
 
 // ── Events ──
@@ -636,56 +872,61 @@ nextBtn.addEventListener('click', skipForward);
 wpmSlider.addEventListener('input', (e) => {
   state.wpm = parseInt(e.target.value);
   wpmValue.textContent = state.wpm;
-  // If voice is playing, restart with new rate
-  if (state.voiceEnabled && state.playing) {
-    voiceStop();
-    voicePlay();
+  if (state.playing) {
+    if (state.voiceMode === 'browser') {
+      browserVoiceStop();
+      browserVoicePlay();
+    } else if (state.voiceMode === 'piper' && state.piperAudio) {
+      state.piperAudio.playbackRate = piperPlaybackRate();
+    }
   }
 });
 
 posSlider.addEventListener('input', (e) => {
-  if (state.voiceEnabled && state.playing) voiceStop();
+  if (isVoiceActive() && state.playing) voiceStop();
   const pct = parseFloat(e.target.value) / 100;
   const targetIdx = Math.floor(pct * state.currentBook.totalWords);
   seekToGlobalIndex(targetIdx);
-  if (state.voiceEnabled && state.playing) voicePlay();
+  if (isVoiceActive() && state.playing) voicePlay();
 });
 
 chapterList.addEventListener('click', (e) => {
   const li = e.target.closest('li[data-chapter]');
   if (li) {
-    if (state.voiceEnabled && state.playing) voiceStop();
+    if (isVoiceActive() && state.playing) voiceStop();
     state.currentChapter = parseInt(li.dataset.chapter);
     state.currentWord = 0;
     renderChapterList();
     showCurrentWord();
-    if (state.voiceEnabled && state.playing) voicePlay();
+    if (isVoiceActive() && state.playing) voicePlay();
   }
 });
 
-voiceToggle.addEventListener('click', () => {
-  state.voiceEnabled = !state.voiceEnabled;
-  voiceToggle.textContent = state.voiceEnabled ? 'Voice: On' : 'Voice: Off';
-  voiceToggle.classList.toggle('active', state.voiceEnabled);
-
-  if (state.playing) {
-    if (state.voiceEnabled) {
-      // Switch from timer to voice
-      clearTimeout(state.timer);
-      voicePlay();
-    } else {
-      // Switch from voice to timer
-      voiceStop();
-      tick();
-    }
-  }
+// Voice mode selector
+voiceModeBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    setVoiceMode(btn.dataset.mode);
+  });
 });
 
 voiceSelect.addEventListener('change', () => {
-  if (state.voiceEnabled && state.playing) {
-    voiceStop();
-    voicePlay();
+  if (state.voiceMode === 'browser' && state.playing) {
+    browserVoiceStop();
+    browserVoicePlay();
   }
+});
+
+piperVoiceSelect.addEventListener('change', () => {
+  state.piperVoiceId = piperVoiceSelect.value;
+  state.piperReady = false;
+  if (state.voiceMode === 'piper' && state.playing) {
+    piperVoiceStop();
+  }
+  updatePiperDownloadBtn();
+});
+
+piperDownloadBtn.addEventListener('click', () => {
+  downloadPiperVoice();
 });
 
 toggleSidebarBtn.addEventListener('click', () => {
@@ -707,7 +948,13 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'ArrowLeft') { e.preventDefault(); skipBackward(); }
   if (e.code === 'ArrowUp') { e.preventDefault(); wpmSlider.value = Math.min(1000, state.wpm + 25); wpmSlider.dispatchEvent(new Event('input')); }
   if (e.code === 'ArrowDown') { e.preventDefault(); wpmSlider.value = Math.max(100, state.wpm - 25); wpmSlider.dispatchEvent(new Event('input')); }
-  if (e.code === 'KeyV') { e.preventDefault(); voiceToggle.click(); }
+  if (e.code === 'KeyV') {
+    e.preventDefault();
+    // Cycle voice modes: off -> browser -> piper -> off
+    const modes = ['off', 'browser', 'piper'];
+    const nextIdx = (modes.indexOf(state.voiceMode) + 1) % modes.length;
+    setVoiceMode(modes[nextIdx]);
+  }
 });
 
 // ── Init ──

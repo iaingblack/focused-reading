@@ -367,38 +367,106 @@ body {
 
 .voice-controls {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   margin-bottom: 1.5rem;
 }
 
-.voice-btn {
-  background: var(--surface);
+.voice-mode-selector {
+  display: flex;
   border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.voice-mode-btn {
+  background: var(--surface);
+  border: none;
+  border-right: 1px solid var(--border);
   color: var(--text);
   padding: 0.5rem 1rem;
-  border-radius: 6px;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s;
 }
 
-.voice-btn:hover { border-color: var(--accent); }
-
-.voice-btn.active {
+.voice-mode-btn:last-child { border-right: none; }
+.voice-mode-btn:hover { background: var(--bg-light); }
+.voice-mode-btn.active {
   background: var(--accent);
-  border-color: var(--accent);
+  color: white;
 }
 
-#voice-select {
+.voice-dropdown {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
   padding: 0.4rem 0.5rem;
   border-radius: 6px;
   font-size: 0.8rem;
-  max-width: 200px;
+  max-width: 220px;
+}
+
+.hidden { display: none !important; }
+
+.piper-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.piper-download-btn {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.piper-download-btn:hover { opacity: 0.85; }
+
+.piper-download-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.piper-download-btn.ready {
+  background: #2a7a3a;
+}
+
+.piper-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  width: 100%;
+  max-width: 300px;
+}
+
+.piper-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.piper-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.2s;
+}
+
+.piper-status-text {
+  white-space: nowrap;
 }
 
 .position-control {

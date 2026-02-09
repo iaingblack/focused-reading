@@ -6,6 +6,13 @@
   <title>Focused Reading</title>
   <link rel="stylesheet" href="style.css">
   <script src="jszip.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/esm/ort.min.js"
+      }
+    }
+  </script>
 </head>
 <body>
   <div id="app">
@@ -62,8 +69,25 @@
               <button id="next-btn" class="control-btn" title="Next sentence">&#9654;&#9654;</button>
             </div>
             <div class="voice-controls">
-              <button id="voice-toggle" class="voice-btn" title="Toggle voice narration">Voice: Off</button>
-              <select id="voice-select"></select>
+              <div class="voice-mode-selector">
+                <button class="voice-mode-btn active" data-mode="off">Off</button>
+                <button class="voice-mode-btn" data-mode="browser">Browser</button>
+                <button class="voice-mode-btn" data-mode="piper">Piper</button>
+              </div>
+              <select id="voice-select" class="voice-dropdown hidden"></select>
+              <div id="piper-controls" class="piper-controls hidden">
+                <select id="piper-voice-select" class="voice-dropdown">
+                  <option value="en_US-hfc_female-medium">Amy (US Female)</option>
+                  <option value="en_US-hfc_male-medium">Ryan (US Male)</option>
+                  <option value="en_US-amy-medium">Amy Alt (US Female)</option>
+                  <option value="en_US-lessac-medium">Lessac (US Female)</option>
+                </select>
+                <button id="piper-download-btn" class="piper-download-btn">Download Voice</button>
+              </div>
+              <div id="piper-status" class="piper-status hidden">
+                <div class="piper-progress-bar"><div id="piper-progress-fill" class="piper-progress-fill"></div></div>
+                <span id="piper-status-text"></span>
+              </div>
             </div>
             <div class="position-control">
               <input type="range" id="position-slider" min="0" max="100" value="0" step="1">
@@ -73,6 +97,6 @@
       </div>
     </div>
   </div>
-  <script src="app.js"></script>
+  <script src="app.js" type="module"></script>
 </body>
 </html>
