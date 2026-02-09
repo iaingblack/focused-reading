@@ -30,6 +30,8 @@ const state = {
   timer: null,
   voiceMode: 'off',   // 'off' | 'browser' | 'piper'
   selectedVoice: null,
+  piperVoiceName: 'en_US-amy',
+  piperQuality: 'medium',
   piperVoiceId: 'en_US-amy-medium',
   piperReady: false,   // true when current voice is downloaded and ready
   piperAudio: null,
@@ -60,6 +62,7 @@ const toggleSidebarBtn = $('#toggle-sidebar');
 const backBtn = $('#back-to-library');
 const voiceSelect = $('#voice-select');
 const piperVoiceSelect = $('#piper-voice-select');
+const piperQualitySelect = $('#piper-quality-select');
 const piperControls = $('#piper-controls');
 const piperDownloadBtn = $('#piper-download-btn');
 const piperStatus = $('#piper-status');
@@ -69,6 +72,29 @@ const textPanel = $('#text-panel');
 const textPanelContent = $('#text-panel-content');
 const toggleTextPanelBtn = $('#toggle-textpanel');
 const voiceModeBtns = document.querySelectorAll('.voice-mode-btn');
+
+// Available quality levels per Piper voice
+const PIPER_VOICE_QUALITIES = {
+  'en_US-amy': ['low', 'medium'],
+  'en_US-lessac': ['low', 'medium', 'high'],
+  'en_US-ryan': ['low', 'medium', 'high'],
+  'en_US-john': ['medium'],
+  'en_GB-alba': ['medium'],
+  'en_GB-alan': ['low', 'medium'],
+};
+
+function updatePiperQualityOptions() {
+  const qualities = PIPER_VOICE_QUALITIES[state.piperVoiceName] || ['medium'];
+  piperQualitySelect.innerHTML = qualities.map(q =>
+    `<option value="${q}"${q === state.piperQuality ? ' selected' : ''}>${q.charAt(0).toUpperCase() + q.slice(1)}</option>`
+  ).join('');
+  // If current quality isn't available for this voice, pick the best available
+  if (!qualities.includes(state.piperQuality)) {
+    state.piperQuality = qualities[qualities.length - 1];
+    piperQualitySelect.value = state.piperQuality;
+  }
+  state.piperVoiceId = `${state.piperVoiceName}-${state.piperQuality}`;
+}
 
 // ── IndexedDB Storage ──
 const DB_NAME = 'focused_reading';
@@ -307,7 +333,9 @@ async function updatePiperDownloadBtn() {
     // Update dropdown labels with download status
     for (const opt of piperVoiceSelect.options) {
       const label = opt.dataset.label;
-      opt.textContent = stored.includes(opt.value) ? `${label} \u2713` : label;
+      const qualities = PIPER_VOICE_QUALITIES[opt.value] || ['medium'];
+      const anyDownloaded = qualities.some(q => stored.includes(`${opt.value}-${q}`));
+      opt.textContent = anyDownloaded ? `${label} \u2713` : label;
     }
   } catch (err) {
     piperDownloadBtn.textContent = 'Error loading';
@@ -511,6 +539,7 @@ function setVoiceMode(mode) {
   piperControls.classList.toggle('hidden', mode !== 'piper');
 
   if (mode === 'piper') {
+    updatePiperQualityOptions();
     updatePiperDownloadBtn();
   } else {
     hidePiperStatus();
@@ -1046,9 +1075,22 @@ voiceSelect.addEventListener('change', () => {
 piperVoiceSelect.addEventListener('change', async () => {
   const wasPlaying = state.playing && state.voiceMode === 'piper';
   if (wasPlaying) piperVoiceStop();
-  state.piperVoiceId = piperVoiceSelect.value;
+  state.piperVoiceName = piperVoiceSelect.value;
+  updatePiperQualityOptions();
   state.piperReady = false;
-  // Reset the singleton so the library loads the new voice model
+  if (piperTts && piperTts.TtsSession) {
+    piperTts.TtsSession._instance = null;
+  }
+  await updatePiperDownloadBtn();
+  if (wasPlaying && state.piperReady) piperVoicePlay();
+});
+
+piperQualitySelect.addEventListener('change', async () => {
+  const wasPlaying = state.playing && state.voiceMode === 'piper';
+  if (wasPlaying) piperVoiceStop();
+  state.piperQuality = piperQualitySelect.value;
+  state.piperVoiceId = `${state.piperVoiceName}-${state.piperQuality}`;
+  state.piperReady = false;
   if (piperTts && piperTts.TtsSession) {
     piperTts.TtsSession._instance = null;
   }
