@@ -7,6 +7,8 @@ const state = {
   wpm: 300,
   playing: false,
   timer: null,
+  voiceEnabled: false,
+  selectedVoice: null,
 };
 
 // ── DOM refs ──
@@ -29,6 +31,8 @@ const bookInfo = $('#book-info');
 const sidebar = $('#sidebar');
 const toggleSidebarBtn = $('#toggle-sidebar');
 const backBtn = $('#back-to-library');
+const voiceToggle = $('#voice-toggle');
+const voiceSelect = $('#voice-select');
 
 // ── IndexedDB Storage ──
 const DB_NAME = 'focused_reading';
@@ -92,7 +96,6 @@ async function dbDelete(storeName, key) {
 }
 
 async function saveBookData(book) {
-  // Store cover as ArrayBuffer so it persists (blob URLs don't)
   await dbPut('books', {
     id: book.id,
     title: book.title,
@@ -130,21 +133,136 @@ async function loadReadingPosition(id) {
   return await dbGet('positions', id);
 }
 
+// ── Voice (Web Speech API) ──
+const synth = window.speechSynthesis;
+
+function populateVoices() {
+  const voices = synth.getVoices();
+  voiceSelect.innerHTML = '';
+  // Prefer English voices, put them first
+  const english = voices.filter(v => v.lang.startsWith('en'));
+  const others = voices.filter(v => !v.lang.startsWith('en'));
+  const sorted = [...english, ...others];
+  sorted.forEach(voice => {
+    const opt = document.createElement('option');
+    opt.value = voice.name;
+    opt.textContent = `${voice.name} (${voice.lang})`;
+    if (voice.default) opt.selected = true;
+    voiceSelect.appendChild(opt);
+  });
+  // Default to first English voice
+  if (english.length > 0 && !state.selectedVoice) {
+    state.selectedVoice = english[0];
+  }
+}
+
+synth.onvoiceschanged = populateVoices;
+populateVoices();
+
+function getSelectedVoice() {
+  const voices = synth.getVoices();
+  const name = voiceSelect.value;
+  return voices.find(v => v.name === name) || voices[0] || null;
+}
+
+// Map WPM to speech rate. Normal speech ~150 WPM = rate 1.0
+// SpeechSynthesis rate range: 0.1 to 10
+function wpmToRate(wpm) {
+  return Math.max(0.5, Math.min(4, wpm / 160));
+}
+
+// Build a sentence string from chapter words starting at wordIndex.
+// Returns { text, wordCount } — collects words until sentence-ending punctuation
+// or a max of ~40 words for manageable chunks.
+function collectSentence(chapter, startWord) {
+  const words = chapter.words;
+  let end = startWord;
+  const max = Math.min(startWord + 50, words.length);
+  for (let i = startWord; i < max; i++) {
+    end = i;
+    if (words[i].match(/[.!?;]["'\u201d\u2019)]*$/)) {
+      break;
+    }
+  }
+  const sentenceWords = words.slice(startWord, end + 1);
+  return { text: sentenceWords.join(' '), wordCount: sentenceWords.length };
+}
+
+// Speak from the current position, sentence by sentence.
+// Uses boundary events to sync the visual word display.
+function voicePlay() {
+  if (!state.playing || !state.voiceEnabled) return;
+  const book = state.currentBook;
+  if (!book) return;
+  const chapter = book.chapters[state.currentChapter];
+  if (!chapter) return;
+
+  if (state.currentWord >= chapter.words.length) {
+    // Move to next chapter
+    if (state.currentChapter < book.chapters.length - 1) {
+      state.currentChapter++;
+      state.currentWord = 0;
+      renderChapterList();
+      voicePlay();
+      return;
+    } else {
+      stop();
+      wordEl.textContent = '\u2014 End \u2014';
+      return;
+    }
+  }
+
+  const { text, wordCount } = collectSentence(chapter, state.currentWord);
+  const sentenceStartWord = state.currentWord;
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.voice = getSelectedVoice();
+  utterance.rate = wpmToRate(state.wpm);
+
+  // Track word position within the sentence via boundary events
+  let wordBoundaryIndex = 0;
+  utterance.onboundary = (e) => {
+    if (e.name === 'word') {
+      state.currentWord = sentenceStartWord + wordBoundaryIndex;
+      showCurrentWord();
+      wordBoundaryIndex++;
+    }
+  };
+
+  utterance.onend = () => {
+    if (!state.playing) return;
+    // Advance past this sentence
+    state.currentWord = sentenceStartWord + wordCount;
+    showCurrentWord();
+    // Speak next sentence
+    voicePlay();
+  };
+
+  utterance.onerror = (e) => {
+    if (e.error === 'canceled' || e.error === 'interrupted') return;
+    console.error('Speech error:', e.error);
+    stop();
+  };
+
+  synth.speak(utterance);
+}
+
+function voiceStop() {
+  synth.cancel();
+}
+
 // ── EPUB Parsing ──
 async function parseEpub(arrayBuffer) {
   const zip = await JSZip.loadAsync(arrayBuffer);
 
-  // Find container.xml to locate the OPF file
   const containerXml = await zip.file('META-INF/container.xml').async('text');
   const containerDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
   const opfPath = containerDoc.querySelector('rootfile').getAttribute('full-path');
   const opfDir = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
 
-  // Parse OPF
   const opfXml = await zip.file(opfPath).async('text');
   const opfDoc = new DOMParser().parseFromString(opfXml, 'application/xml');
 
-  // Metadata
   const getText = (tag) => {
     const el = opfDoc.querySelector(tag) || opfDoc.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', tag.replace('dc\\:', ''))[0];
     return el ? el.textContent.trim() : '';
@@ -152,7 +270,6 @@ async function parseEpub(arrayBuffer) {
   const title = getText('dc\\:title') || getText('title') || 'Unknown Title';
   const author = getText('dc\\:creator') || getText('creator') || 'Unknown Author';
 
-  // Cover image
   let cover = null;
   let coverBlob = null;
   const coverMeta = opfDoc.querySelector('meta[name="cover"]');
@@ -169,7 +286,6 @@ async function parseEpub(arrayBuffer) {
       }
     }
   }
-  // Fallback: look for cover image by properties attribute
   if (!cover) {
     const coverItem = opfDoc.querySelector('item[properties="cover-image"]');
     if (coverItem) {
@@ -183,17 +299,14 @@ async function parseEpub(arrayBuffer) {
     }
   }
 
-  // Spine order
   const spineItems = [...opfDoc.querySelectorAll('spine itemref')];
   const manifest = {};
   opfDoc.querySelectorAll('manifest item').forEach(item => {
     manifest[item.getAttribute('id')] = item.getAttribute('href');
   });
 
-  // Parse NCX/NAV for chapter titles
   const tocTitles = await parseToc(zip, opfDoc, opfDir, manifest);
 
-  // Extract text from each spine item
   const chapters = [];
   for (const itemref of spineItems) {
     const idref = itemref.getAttribute('idref');
@@ -223,7 +336,6 @@ async function parseEpub(arrayBuffer) {
 async function parseToc(zip, opfDoc, opfDir, manifest) {
   const titles = {};
 
-  // Try NAV (EPUB3)
   const navItem = opfDoc.querySelector('item[properties*="nav"]');
   if (navItem) {
     const navHref = navItem.getAttribute('href');
@@ -243,7 +355,6 @@ async function parseToc(zip, opfDoc, opfDir, manifest) {
     }
   }
 
-  // Try NCX (EPUB2)
   const ncxItem = opfDoc.querySelector('item[media-type="application/x-dtbncx+xml"]');
   if (ncxItem) {
     const ncxHref = ncxItem.getAttribute('href');
@@ -309,8 +420,8 @@ async function openBook(book) {
   state.currentBook = book;
   state.playing = false;
   clearInterval(state.timer);
+  voiceStop();
 
-  // Restore position
   const pos = await loadReadingPosition(book.id);
   if (pos) {
     state.currentChapter = Math.min(pos.chapter, book.chapters.length - 1);
@@ -361,7 +472,6 @@ function showCurrentWord() {
   if (!chapter) return;
 
   if (state.currentWord >= chapter.words.length) {
-    // Move to next chapter
     if (state.currentChapter < book.chapters.length - 1) {
       state.currentChapter++;
       state.currentWord = 0;
@@ -369,9 +479,8 @@ function showCurrentWord() {
       showCurrentWord();
       return;
     } else {
-      // End of book
       stop();
-      wordEl.textContent = '— End —';
+      wordEl.textContent = '\u2014 End \u2014';
       return;
     }
   }
@@ -385,7 +494,6 @@ function updateProgress() {
   const book = state.currentBook;
   if (!book) return;
 
-  // Global progress
   let wordsBefore = 0;
   for (let i = 0; i < state.currentChapter; i++) {
     wordsBefore += book.chapters[i].words.length;
@@ -409,7 +517,6 @@ function seekToGlobalIndex(targetIdx) {
     }
     idx += book.chapters[i].words.length;
   }
-  // Past end
   state.currentChapter = book.chapters.length - 1;
   state.currentWord = book.chapters[state.currentChapter].words.length - 1;
   renderChapterList();
@@ -420,18 +527,23 @@ function play() {
   if (state.playing) return;
   state.playing = true;
   updatePlayButton();
-  tick();
+  if (state.voiceEnabled) {
+    voicePlay();
+  } else {
+    tick();
+  }
 }
 
 function stop() {
   state.playing = false;
   clearTimeout(state.timer);
+  voiceStop();
   updatePlayButton();
   saveReadingPosition();
 }
 
 function tick() {
-  if (!state.playing) return;
+  if (!state.playing || state.voiceEnabled) return;
   state.currentWord++;
   showCurrentWord();
   const delay = 60000 / state.wpm;
@@ -443,8 +555,8 @@ function updatePlayButton() {
 }
 
 function skipForward() {
+  if (state.voiceEnabled && state.playing) voiceStop();
   const chapter = state.currentBook.chapters[state.currentChapter];
-  // Jump forward ~10 words or to next sentence
   let target = state.currentWord;
   let found = false;
   for (let i = target + 1; i < Math.min(target + 30, chapter.words.length); i++) {
@@ -457,9 +569,11 @@ function skipForward() {
   if (!found) target = Math.min(state.currentWord + 10, chapter.words.length - 1);
   state.currentWord = target;
   showCurrentWord();
+  if (state.voiceEnabled && state.playing) voicePlay();
 }
 
 function skipBackward() {
+  if (state.voiceEnabled && state.playing) voiceStop();
   const chapter = state.currentBook.chapters[state.currentChapter];
   let target = state.currentWord;
   let found = false;
@@ -473,6 +587,7 @@ function skipBackward() {
   if (!found) target = Math.max(0, state.currentWord - 10);
   state.currentWord = target;
   showCurrentWord();
+  if (state.voiceEnabled && state.playing) voicePlay();
 }
 
 // ── Events ──
@@ -521,21 +636,55 @@ nextBtn.addEventListener('click', skipForward);
 wpmSlider.addEventListener('input', (e) => {
   state.wpm = parseInt(e.target.value);
   wpmValue.textContent = state.wpm;
+  // If voice is playing, restart with new rate
+  if (state.voiceEnabled && state.playing) {
+    voiceStop();
+    voicePlay();
+  }
 });
 
 posSlider.addEventListener('input', (e) => {
+  if (state.voiceEnabled && state.playing) voiceStop();
   const pct = parseFloat(e.target.value) / 100;
   const targetIdx = Math.floor(pct * state.currentBook.totalWords);
   seekToGlobalIndex(targetIdx);
+  if (state.voiceEnabled && state.playing) voicePlay();
 });
 
 chapterList.addEventListener('click', (e) => {
   const li = e.target.closest('li[data-chapter]');
   if (li) {
+    if (state.voiceEnabled && state.playing) voiceStop();
     state.currentChapter = parseInt(li.dataset.chapter);
     state.currentWord = 0;
     renderChapterList();
     showCurrentWord();
+    if (state.voiceEnabled && state.playing) voicePlay();
+  }
+});
+
+voiceToggle.addEventListener('click', () => {
+  state.voiceEnabled = !state.voiceEnabled;
+  voiceToggle.textContent = state.voiceEnabled ? 'Voice: On' : 'Voice: Off';
+  voiceToggle.classList.toggle('active', state.voiceEnabled);
+
+  if (state.playing) {
+    if (state.voiceEnabled) {
+      // Switch from timer to voice
+      clearTimeout(state.timer);
+      voicePlay();
+    } else {
+      // Switch from voice to timer
+      voiceStop();
+      tick();
+    }
+  }
+});
+
+voiceSelect.addEventListener('change', () => {
+  if (state.voiceEnabled && state.playing) {
+    voiceStop();
+    voicePlay();
   }
 });
 
@@ -558,6 +707,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'ArrowLeft') { e.preventDefault(); skipBackward(); }
   if (e.code === 'ArrowUp') { e.preventDefault(); wpmSlider.value = Math.min(1000, state.wpm + 25); wpmSlider.dispatchEvent(new Event('input')); }
   if (e.code === 'ArrowDown') { e.preventDefault(); wpmSlider.value = Math.max(100, state.wpm - 25); wpmSlider.dispatchEvent(new Event('input')); }
+  if (e.code === 'KeyV') { e.preventDefault(); voiceToggle.click(); }
 });
 
 // ── Init ──
