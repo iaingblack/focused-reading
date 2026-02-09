@@ -1018,6 +1018,10 @@ piperVoiceSelect.addEventListener('change', async () => {
   if (wasPlaying) piperVoiceStop();
   state.piperVoiceId = piperVoiceSelect.value;
   state.piperReady = false;
+  // Reset the singleton so the library loads the new voice model
+  if (piperTts && piperTts.TtsSession) {
+    piperTts.TtsSession._instance = null;
+  }
   await updatePiperDownloadBtn();
   if (wasPlaying && state.piperReady) piperVoicePlay();
 });
