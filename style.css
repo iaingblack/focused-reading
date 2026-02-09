@@ -153,6 +153,7 @@ body {
 .reader-layout {
   display: flex;
   height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -477,6 +478,76 @@ body {
   width: 100%;
   accent-color: var(--accent);
 }
+
+/* Text Panel (right side) */
+.text-panel {
+  width: 400px;
+  background: var(--bg-light);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  flex-shrink: 0;
+  transition: margin-right 0.3s;
+  padding: 1.5rem;
+}
+
+.text-panel.collapsed {
+  margin-right: -400px;
+}
+
+.text-panel-content {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.text-panel-content p {
+  margin-bottom: 1em;
+}
+
+.text-panel-content h1,
+.text-panel-content h2,
+.text-panel-content h3,
+.text-panel-content h4,
+.text-panel-content h5,
+.text-panel-content h6 {
+  margin: 1.2em 0 0.6em;
+  font-weight: 600;
+}
+
+.text-panel-content h1 { font-size: 1.4rem; }
+.text-panel-content h2 { font-size: 1.25rem; }
+.text-panel-content h3 { font-size: 1.1rem; }
+
+.text-panel-content ul,
+.text-panel-content ol {
+  margin: 0.5em 0 0.5em 1.5em;
+}
+
+.text-panel-content li {
+  margin-bottom: 0.3em;
+}
+
+.text-panel-content .current-word {
+  background: var(--accent);
+  color: white;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.toggle-textpanel-btn {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 1.2rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.toggle-textpanel-btn:hover { border-color: var(--accent); }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }

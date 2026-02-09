@@ -28,6 +28,7 @@ const state = {
   piperAudio: null,
   piperWordTimer: null,
   piperAbort: false,
+  textPanelOpen: false,
 };
 
 // ── DOM refs ──
@@ -57,6 +58,9 @@ const piperDownloadBtn = $('#piper-download-btn');
 const piperStatus = $('#piper-status');
 const piperProgressFill = $('#piper-progress-fill');
 const piperStatusText = $('#piper-status-text');
+const textPanel = $('#text-panel');
+const textPanelContent = $('#text-panel-content');
+const toggleTextPanelBtn = $('#toggle-textpanel');
 const voiceModeBtns = document.querySelectorAll('.voice-mode-btn');
 
 // ── IndexedDB Storage ──
@@ -554,8 +558,9 @@ async function parseEpub(arrayBuffer) {
 
     if (words.length === 0) continue;
 
+    const chapterHtml = sanitizeHtml(doc.body);
     const chapterTitle = tocTitles[href] || `Chapter ${chapters.length + 1}`;
-    chapters.push({ title: chapterTitle, words });
+    chapters.push({ title: chapterTitle, words, html: chapterHtml });
   }
 
   const totalWords = chapters.reduce((sum, ch) => sum + ch.words.length, 0);
@@ -607,6 +612,12 @@ async function parseToc(zip, opfDoc, opfDir, manifest) {
   }
 
   return titles;
+}
+
+function sanitizeHtml(node) {
+  const clone = node.cloneNode(true);
+  clone.querySelectorAll('script, style, svg, img').forEach(el => el.remove());
+  return clone.innerHTML;
 }
 
 function extractText(node) {
@@ -670,6 +681,7 @@ async function openBook(book) {
   showCurrentWord();
   updateProgress();
   updatePlayButton();
+  if (state.textPanelOpen) renderTextPanel();
 
   libraryView.classList.remove('active');
   readerView.classList.add('active');
@@ -706,6 +718,7 @@ function showCurrentWord() {
       state.currentChapter++;
       state.currentWord = 0;
       renderChapterList();
+      if (state.textPanelOpen) renderTextPanel();
       showCurrentWord();
       return;
     } else {
@@ -718,6 +731,7 @@ function showCurrentWord() {
   wordEl.textContent = chapter.words[state.currentWord];
   chapterLabel.textContent = chapter.title;
   updateProgress();
+  updateTextPanelHighlight();
 }
 
 function updateProgress() {
@@ -832,6 +846,75 @@ function skipBackward() {
   if (isVoiceActive() && state.playing) voicePlay();
 }
 
+// ── Text Panel ──
+function renderTextPanel() {
+  const book = state.currentBook;
+  if (!book) return;
+  const chapter = book.chapters[state.currentChapter];
+  if (!chapter) {
+    textPanelContent.innerHTML = '';
+    return;
+  }
+  if (chapter.html) {
+    textPanelContent.innerHTML = chapter.html;
+  } else {
+    // Fallback for books imported before html was stored
+    const p = document.createElement('p');
+    p.textContent = chapter.words.join(' ');
+    textPanelContent.innerHTML = '';
+    textPanelContent.appendChild(p);
+  }
+  wrapWordsInPanel();
+  updateTextPanelHighlight();
+}
+
+function wrapWordsInPanel() {
+  let wordIdx = 0;
+  const walker = document.createTreeWalker(textPanelContent, NodeFilter.SHOW_TEXT);
+  const replacements = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    const text = node.textContent;
+    const words = text.split(/(\s+)/);
+    if (words.every(w => w.trim() === '')) continue;
+    const frag = document.createDocumentFragment();
+    for (const part of words) {
+      if (part.trim() === '') {
+        frag.appendChild(document.createTextNode(part));
+      } else {
+        const span = document.createElement('span');
+        span.dataset.wordIdx = wordIdx;
+        span.textContent = part;
+        frag.appendChild(span);
+        wordIdx++;
+      }
+    }
+    replacements.push({ node, frag });
+  }
+  for (const { node, frag } of replacements) {
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+function updateTextPanelHighlight() {
+  if (!state.textPanelOpen) return;
+  const prev = textPanelContent.querySelector('.current-word');
+  if (prev) prev.classList.remove('current-word');
+  const span = textPanelContent.querySelector(`[data-word-idx="${state.currentWord}"]`);
+  if (span) {
+    span.classList.add('current-word');
+    span.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+}
+
+function toggleTextPanel() {
+  state.textPanelOpen = !state.textPanelOpen;
+  textPanel.classList.toggle('collapsed', !state.textPanelOpen);
+  if (state.textPanelOpen) {
+    renderTextPanel();
+  }
+}
+
 // ── Events ──
 epubInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -903,6 +986,7 @@ chapterList.addEventListener('click', (e) => {
     state.currentChapter = parseInt(li.dataset.chapter);
     state.currentWord = 0;
     renderChapterList();
+    if (state.textPanelOpen) renderTextPanel();
     showCurrentWord();
     if (isVoiceActive() && state.playing) voicePlay();
   }
@@ -939,6 +1023,8 @@ toggleSidebarBtn.addEventListener('click', () => {
   sidebar.classList.toggle('collapsed');
 });
 
+toggleTextPanelBtn.addEventListener('click', toggleTextPanel);
+
 backBtn.addEventListener('click', () => {
   stop();
   saveReadingPosition();
@@ -954,6 +1040,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'ArrowLeft') { e.preventDefault(); skipBackward(); }
   if (e.code === 'ArrowUp') { e.preventDefault(); wpmSlider.value = Math.min(1000, state.wpm + 25); wpmSlider.dispatchEvent(new Event('input')); }
   if (e.code === 'ArrowDown') { e.preventDefault(); wpmSlider.value = Math.max(100, state.wpm - 25); wpmSlider.dispatchEvent(new Event('input')); }
+  if (e.code === 'KeyT') { e.preventDefault(); toggleTextPanel(); }
   if (e.code === 'KeyV') {
     e.preventDefault();
     // Cycle voice modes: off -> browser -> piper -> off
