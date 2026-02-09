@@ -201,30 +201,18 @@ async function loadReadingPosition(id) {
 // ── Browser Voice (Web Speech API) ──
 const synth = window.speechSynthesis;
 
-// Novelty/sound effect voices to exclude
-const NOVELTY_VOICES = new Set([
-  'Albert', 'Bad News', 'Bahh', 'Bells', 'Boing', 'Bubbles', 'Cellos',
-  'Good News', 'Jester', 'Organ', 'Superstar', 'Trinoids', 'Whisper',
-  'Wobble', 'Zarvox', 'Ralph', 'Fred', 'Kathy', 'Junior', 'Princess',
-  'Pipe Organ', 'Deranged',
-]);
-
 function populateVoices() {
   const voices = synth.getVoices();
   voiceSelect.innerHTML = '';
-  const english = voices.filter(v =>
-    v.lang.startsWith('en') &&
-    !NOVELTY_VOICES.has(v.name.replace(/\s*\(.*\)/, ''))
-  );
-  english.forEach(voice => {
+  voices.forEach(voice => {
     const opt = document.createElement('option');
     opt.value = voice.name;
     opt.textContent = `${voice.name} (${voice.lang})`;
     if (voice.default) opt.selected = true;
     voiceSelect.appendChild(opt);
   });
-  if (english.length > 0 && !state.selectedVoice) {
-    state.selectedVoice = english[0];
+  if (voices.length > 0 && !state.selectedVoice) {
+    state.selectedVoice = voices[0];
   }
 }
 
