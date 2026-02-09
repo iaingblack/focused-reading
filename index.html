@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Focused Reading</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="jszip.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Library View -->
+    <div id="library-view" class="view active">
+      <header class="library-header">
+        <h1>Focused Reading</h1>
+        <p class="subtitle">Speed read your books, one word at a time</p>
+      </header>
+      <div class="library-actions">
+        <label class="import-btn" for="epub-input">
+          + Add Book
+          <input type="file" id="epub-input" accept=".epub" hidden>
+        </label>
+      </div>
+      <div id="book-grid" class="book-grid">
+        <p class="empty-state">No books yet. Import an EPUB to get started.</p>
+      </div>
+    </div>
+
+    <!-- Reader View -->
+    <div id="reader-view" class="view">
+      <div class="reader-layout">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="sidebar">
+          <button id="back-to-library" class="back-btn">&larr; Library</button>
+          <div id="book-info" class="book-info"></div>
+          <div class="chapter-list">
+            <h3>Chapters</h3>
+            <ul id="chapter-list"></ul>
+          </div>
+        </aside>
+
+        <!-- Main Reader -->
+        <main class="reader-main">
+          <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Toggle sidebar">&#9776;</button>
+          <div class="reader-display">
+            <div class="progress-bar-container">
+              <div id="progress-bar" class="progress-bar"></div>
+            </div>
+            <div id="word-display" class="word-display">
+              <span id="current-word">Press Play to start</span>
+            </div>
+            <div id="chapter-label" class="chapter-label"></div>
+          </div>
+          <div class="reader-controls">
+            <div class="speed-control">
+              <label for="wpm-slider">Speed: <span id="wpm-value">300</span> WPM</label>
+              <input type="range" id="wpm-slider" min="100" max="1000" step="25" value="300">
+            </div>
+            <div class="playback-controls">
+              <button id="prev-btn" class="control-btn" title="Previous sentence">&#9664;&#9664;</button>
+              <button id="play-btn" class="control-btn play-btn" title="Play/Pause">&#9654;</button>
+              <button id="next-btn" class="control-btn" title="Next sentence">&#9654;&#9654;</button>
+            </div>
+            <div class="position-control">
+              <input type="range" id="position-slider" min="0" max="100" value="0" step="1">
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
