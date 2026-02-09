@@ -1,14 +1,21 @@
-// ── Piper TTS (lazy-loaded ES module) ──
+// ── Piper TTS (lazy-loaded ES module, local first then CDN fallback) ──
 let piperTts = null;
 async function loadPiperModule() {
   if (piperTts) return piperTts;
   try {
+    piperTts = await import('./piper-tts-web.js');
+    console.log('Piper TTS loaded from local file');
+    return piperTts;
+  } catch (_) {
+    // Local file not found, fall back to CDN
+  }
+  try {
     piperTts = await import('https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/dist/piper-tts-web.js');
-    console.log('Piper TTS module loaded successfully');
+    console.log('Piper TTS loaded from CDN');
     return piperTts;
   } catch (err) {
     console.error('Failed to load Piper TTS module:', err);
-    throw new Error('Could not load Piper TTS library. Make sure you are serving over HTTPS or localhost.');
+    throw new Error('Could not load Piper TTS library. Place piper-tts-web.js locally or serve over HTTPS/localhost for CDN access.');
   }
 }
 
