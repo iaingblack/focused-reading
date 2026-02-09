@@ -213,7 +213,7 @@ function populateVoices() {
   const voices = synth.getVoices();
   voiceSelect.innerHTML = '';
   const english = voices.filter(v =>
-    (v.lang === 'en-US' || v.lang === 'en-GB' || v.lang === 'en_US' || v.lang === 'en_GB') &&
+    v.lang.startsWith('en') &&
     !NOVELTY_VOICES.has(v.name.replace(/\s*\(.*\)/, ''))
   );
   english.forEach(voice => {
