@@ -45,6 +45,9 @@ const $ = (sel) => document.querySelector(sel);
 const libraryView = $('#library-view');
 const readerView = $('#reader-view');
 const bookGrid = $('#book-grid');
+const helpBtn = $('#help-btn');
+const helpModal = $('#help-modal');
+const helpClose = $('#help-close');
 const epubInput = $('#epub-input');
 const wordEl = $('#current-word');
 const wpmSlider = $('#wpm-slider');
@@ -991,6 +994,12 @@ function toggleTextPanel() {
 }
 
 // ── Events ──
+helpBtn.addEventListener('click', () => helpModal.classList.remove('hidden'));
+helpClose.addEventListener('click', () => helpModal.classList.add('hidden'));
+helpModal.addEventListener('click', (e) => {
+  if (e.target === helpModal) helpModal.classList.add('hidden');
+});
+
 epubInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;

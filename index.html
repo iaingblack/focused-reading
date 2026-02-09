@@ -27,6 +27,48 @@
           + Add Book
           <input type="file" id="epub-input" accept=".epub" hidden>
         </label>
+        <button id="help-btn" class="help-btn">? Help</button>
+      </div>
+
+      <!-- Help Modal -->
+      <div id="help-modal" class="help-modal hidden">
+        <div class="help-modal-content">
+          <button id="help-close" class="help-close">&times;</button>
+          <h2>Getting Started</h2>
+          <p>Import an EPUB file and click on a book to start speed reading. Words are displayed one at a time in the center of the screen.</p>
+
+          <h3>Keyboard Shortcuts</h3>
+          <table class="help-table">
+            <tr><td><kbd>Space</kbd></td><td>Play / Pause</td></tr>
+            <tr><td><kbd>&rarr;</kbd></td><td>Next sentence</td></tr>
+            <tr><td><kbd>&larr;</kbd></td><td>Previous sentence</td></tr>
+            <tr><td><kbd>&uarr;</kbd> / <kbd>&darr;</kbd></td><td>Speed up / slow down</td></tr>
+            <tr><td><kbd>T</kbd></td><td>Toggle text panel</td></tr>
+            <tr><td><kbd>V</kbd></td><td>Cycle voice mode</td></tr>
+          </table>
+
+          <h3>Voice Narration</h3>
+          <p>Three voice modes are available:</p>
+          <ul>
+            <li><strong>Off</strong> &mdash; Silent, words displayed visually only</li>
+            <li><strong>Browser</strong> &mdash; Uses your operating system's built-in voices via the Web Speech API. Zero latency, no downloads needed.</li>
+            <li><strong>Piper</strong> &mdash; Neural TTS running in the browser via ONNX. Requires downloading a voice model (~63MB). Higher CPU usage with pauses between sentences.</li>
+          </ul>
+
+          <h3>Enabling High-Quality macOS Voices</h3>
+          <p>macOS includes basic system voices by default, but much better Siri and Enhanced voices are available for free:</p>
+          <ol>
+            <li>Open <strong>System Settings</strong> &rarr; <strong>Accessibility</strong> &rarr; <strong>Spoken Content</strong></li>
+            <li>Click <strong>Manage Voices...</strong></li>
+            <li>Find voices marked <strong>Siri</strong> or <strong>Enhanced</strong> (e.g. "Samantha (Enhanced)")</li>
+            <li>Click the download button next to the ones you want</li>
+            <li>Once downloaded, they appear automatically in the Browser voice dropdown</li>
+          </ol>
+          <p>Siri voices are high quality, natural sounding, and have no processing delay.</p>
+
+          <h3>Text Panel</h3>
+          <p>Press <kbd>T</kbd> or click the button at the top-right of the reader to open a side panel showing the full chapter text. The current word is highlighted and auto-scrolls as you read.</p>
+        </div>
       </div>
       <div id="book-grid" class="book-grid">
         <p class="empty-state">No books yet. Import an EPUB to get started.</p>

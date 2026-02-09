@@ -60,6 +60,109 @@ body {
 
 .import-btn:hover { opacity: 0.85; }
 
+.help-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.help-btn:hover { border-color: var(--accent); color: var(--text); }
+
+.help-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.help-modal.hidden { display: none; }
+
+.help-modal-content {
+  background: var(--bg-light);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.help-modal-content h2 {
+  font-size: 1.4rem;
+  margin-bottom: 1rem;
+}
+
+.help-modal-content h3 {
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.5rem;
+  color: var(--accent);
+}
+
+.help-modal-content p {
+  margin-bottom: 0.75rem;
+  color: var(--text);
+}
+
+.help-modal-content ul,
+.help-modal-content ol {
+  margin: 0.5rem 0 0.75rem 1.5rem;
+}
+
+.help-modal-content li {
+  margin-bottom: 0.4rem;
+}
+
+.help-modal-content kbd {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.help-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+
+.help-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.help-table td:first-child {
+  width: 120px;
+  white-space: nowrap;
+}
+
+.help-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.help-close:hover { color: var(--text); }
+
 .book-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
