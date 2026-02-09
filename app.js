@@ -1013,13 +1013,13 @@ voiceSelect.addEventListener('change', () => {
   }
 });
 
-piperVoiceSelect.addEventListener('change', () => {
+piperVoiceSelect.addEventListener('change', async () => {
+  const wasPlaying = state.playing && state.voiceMode === 'piper';
+  if (wasPlaying) piperVoiceStop();
   state.piperVoiceId = piperVoiceSelect.value;
   state.piperReady = false;
-  if (state.voiceMode === 'piper' && state.playing) {
-    piperVoiceStop();
-  }
-  updatePiperDownloadBtn();
+  await updatePiperDownloadBtn();
+  if (wasPlaying && state.piperReady) piperVoicePlay();
 });
 
 piperDownloadBtn.addEventListener('click', () => {
