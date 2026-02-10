@@ -4,7 +4,7 @@ let requestId = 0;
 
 async function loadTts() {
   if (tts) return tts;
-  tts = await import('./piper-tts-web.js');
+  tts = await import('./piper-tts-web.js?v=2');
   return tts;
 }
 
