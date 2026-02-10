@@ -280,7 +280,7 @@ const _TtsSession = class _TtsSession {
   async init() {
     const { createPiperPhonemize } = await import("./piper-o91UDS6e.js");
     __privateSet(this, _createPiperPhonemize, createPiperPhonemize);
-    __privateSet(this, _ort, await import("onnxruntime-web"));
+    __privateSet(this, _ort, await import("https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/esm/ort.min.js"));
     __privateGet(this, _ort).env.allowLocalModels = false;
     __privateGet(this, _ort).env.wasm.numThreads = navigator.hardwareConcurrency;
     __privateGet(this, _ort).env.wasm.wasmPaths = __privateGet(this, _wasmPaths).onnxWasm;

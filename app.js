@@ -1,22 +1,69 @@
-// ── Piper TTS (lazy-loaded ES module, local first then CDN fallback) ──
-let piperTts = null;
-async function loadPiperModule() {
-  if (piperTts) return piperTts;
-  try {
-    piperTts = await import('./piper-tts-web.js');
-    console.log('Piper TTS loaded from local file');
-    return piperTts;
-  } catch (_) {
-    // Local file not found, fall back to CDN
-  }
-  try {
-    piperTts = await import('https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/dist/piper-tts-web.js');
-    console.log('Piper TTS loaded from CDN');
-    return piperTts;
-  } catch (err) {
-    console.error('Failed to load Piper TTS module:', err);
-    throw new Error('Could not load Piper TTS library. Place piper-tts-web.js locally or serve over HTTPS/localhost for CDN access.');
-  }
+// ── Piper TTS (runs in Web Worker to avoid blocking UI) ──
+let piperWorker = null;
+let piperMsgId = 0;
+const piperCallbacks = new Map();
+
+function getPiperWorker() {
+  if (piperWorker) return piperWorker;
+  piperWorker = new Worker('piper-worker.js', { type: 'module' });
+  piperWorker.onmessage = (e) => {
+    const { id } = e.data;
+    const cb = piperCallbacks.get(id);
+    if (cb) {
+      piperCallbacks.delete(id);
+      cb(e.data);
+    }
+  };
+  return piperWorker;
+}
+
+function piperCall(msg) {
+  return new Promise((resolve, reject) => {
+    const id = ++piperMsgId;
+    piperCallbacks.set(id, (data) => {
+      if (data.type === 'error') reject(new Error(data.error));
+      else resolve(data);
+    });
+    getPiperWorker().postMessage({ ...msg, id });
+  });
+}
+
+// For download progress, we need a streaming callback
+function piperDownloadWithProgress(voiceId, onProgress) {
+  return new Promise((resolve, reject) => {
+    const id = ++piperMsgId;
+    const worker = getPiperWorker();
+    const handler = (e) => {
+      if (e.data.id !== id) return;
+      if (e.data.type === 'download-progress') {
+        onProgress(e.data.progress);
+      } else if (e.data.type === 'download-done') {
+        worker.removeEventListener('message', handler);
+        piperCallbacks.delete(id);
+        resolve();
+      } else if (e.data.type === 'error') {
+        worker.removeEventListener('message', handler);
+        piperCallbacks.delete(id);
+        reject(new Error(e.data.error));
+      }
+    };
+    worker.addEventListener('message', handler);
+    worker.postMessage({ type: 'download', id, voiceId });
+  });
+}
+
+async function piperPredict(text, voiceId) {
+  const data = await piperCall({ type: 'predict', text, voiceId });
+  return new Blob([data.buffer], { type: 'audio/wav' });
+}
+
+async function piperStored() {
+  const data = await piperCall({ type: 'stored' });
+  return data.list;
+}
+
+async function piperResetSession() {
+  await piperCall({ type: 'reset' });
 }
 
 // ── State ──
@@ -325,8 +372,7 @@ function hidePiperStatus() {
 
 async function updatePiperDownloadBtn() {
   try {
-    const tts = await loadPiperModule();
-    const stored = await tts.stored();
+    const stored = await piperStored();
     const isDownloaded = stored.includes(state.piperVoiceId);
     state.piperReady = isDownloaded;
     piperDownloadBtn.textContent = isDownloaded ? 'Ready' : 'Download Voice';
@@ -353,10 +399,9 @@ async function downloadPiperVoice() {
   showPiperStatus('Loading Piper engine...', 0);
 
   try {
-    const tts = await loadPiperModule();
     showPiperStatus('Downloading voice model...', 0);
 
-    await tts.download(state.piperVoiceId, (progress) => {
+    await piperDownloadWithProgress(state.piperVoiceId, (progress) => {
       if (progress.total) {
         const pct = Math.round((progress.loaded / progress.total) * 100);
         const sizeMB = (progress.total / 1024 / 1024).toFixed(0);
@@ -384,13 +429,12 @@ async function downloadPiperVoice() {
 // audioReady is a promise that resolves to { audio, blobUrl } — fully decoded and ready to play
 let piperPrefetchQueue = [];
 
-function piperMakeAudioReady(tts, text, wordCount) {
-  // Chain: predict → create Audio → wait for it to be decoded — all as one promise
-  return tts.predict({ text, voiceId: state.piperVoiceId }).then(wav => {
+function piperMakeAudioReady(text) {
+  // Chain: predict in worker → create Audio → wait for decode — all as one promise
+  return piperPredict(text, state.piperVoiceId).then(wav => {
     const blobUrl = URL.createObjectURL(wav);
     const audio = new Audio(blobUrl);
     audio.playbackRate = piperPlaybackRate();
-    // Preload so the browser decodes the WAV before we need it
     audio.preload = 'auto';
     return new Promise((resolve, reject) => {
       audio.addEventListener('canplaythrough', () => resolve({ audio, blobUrl }), { once: true });
@@ -400,7 +444,7 @@ function piperMakeAudioReady(tts, text, wordCount) {
   });
 }
 
-function piperPrefetchAhead(tts, chapter, nextWordStart) {
+function piperPrefetchAhead(chapter, nextWordStart) {
   piperPrefetchQueue = piperPrefetchQueue.filter(p => p.wordStart >= nextWordStart);
 
   let wordPos = nextWordStart;
@@ -414,7 +458,7 @@ function piperPrefetchAhead(tts, chapter, nextWordStart) {
     piperPrefetchQueue.push({
       wordStart: wordPos,
       wordCount,
-      audioReady: piperMakeAudioReady(tts, text, wordCount),
+      audioReady: piperMakeAudioReady(text),
     });
     wordPos += wordCount;
   }
@@ -454,8 +498,6 @@ async function piperVoicePlay() {
   const sentenceStartWord = state.currentWord;
 
   try {
-    const tts = await loadPiperModule();
-
     // Get a ready-to-play Audio: from prefetch queue or generate fresh
     let audio, blobUrl;
     const prefetchIdx = piperPrefetchQueue.findIndex(p => p.wordStart === sentenceStartWord);
@@ -464,7 +506,7 @@ async function piperVoicePlay() {
       piperPrefetchQueue.splice(prefetchIdx, 1);
     } else {
       piperPrefetchQueue = [];
-      ({ audio, blobUrl } = await piperMakeAudioReady(tts, text, wordCount));
+      ({ audio, blobUrl } = await piperMakeAudioReady(text));
     }
 
     if (state.piperAbort || !state.playing) {
@@ -473,7 +515,7 @@ async function piperVoicePlay() {
     }
 
     // Prefetch next 2 sentences while this one plays
-    piperPrefetchAhead(tts, chapter, sentenceStartWord + wordCount);
+    piperPrefetchAhead(chapter, sentenceStartWord + wordCount);
 
     audio.playbackRate = piperPlaybackRate();
     state.piperAudio = audio;
@@ -1112,9 +1154,7 @@ piperVoiceSelect.addEventListener('change', async () => {
   state.piperVoiceName = piperVoiceSelect.value;
   updatePiperQualityOptions();
   state.piperReady = false;
-  if (piperTts && piperTts.TtsSession) {
-    piperTts.TtsSession._instance = null;
-  }
+  piperResetSession();
   await updatePiperDownloadBtn();
   if (wasPlaying && state.piperReady) piperVoicePlay();
 });
@@ -1125,9 +1165,7 @@ piperQualitySelect.addEventListener('change', async () => {
   state.piperQuality = piperQualitySelect.value;
   state.piperVoiceId = `${state.piperVoiceName}-${state.piperQuality}`;
   state.piperReady = false;
-  if (piperTts && piperTts.TtsSession) {
-    piperTts.TtsSession._instance = null;
-  }
+  piperResetSession();
   await updatePiperDownloadBtn();
   if (wasPlaying && state.piperReady) piperVoicePlay();
 });
