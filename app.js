@@ -425,23 +425,16 @@ async function downloadPiperVoice() {
   }
 }
 
-// Prefetch queue: each entry has { wordStart, wordCount, audioReady }
-// audioReady is a promise that resolves to { audio, blobUrl } — fully decoded and ready to play
+// Prefetch queue: stores WAV blobs (not Audio objects, to avoid Safari gesture restrictions)
 let piperPrefetchQueue = [];
+// Single persistent Audio element, created on user gesture to satisfy Safari autoplay policy
+let piperAudioEl = null;
 
-function piperMakeAudioReady(text) {
-  // Chain: predict in worker → create Audio → wait for decode — all as one promise
-  return piperPredict(text, state.piperVoiceId).then(wav => {
-    const blobUrl = URL.createObjectURL(wav);
-    const audio = new Audio(blobUrl);
-    audio.playbackRate = piperPlaybackRate();
-    audio.preload = 'auto';
-    return new Promise((resolve, reject) => {
-      audio.addEventListener('canplaythrough', () => resolve({ audio, blobUrl }), { once: true });
-      audio.addEventListener('error', () => { URL.revokeObjectURL(blobUrl); reject(new Error('Audio decode error')); }, { once: true });
-      audio.load();
-    });
-  });
+function ensurePiperAudioEl() {
+  if (!piperAudioEl) {
+    piperAudioEl = new Audio();
+  }
+  return piperAudioEl;
 }
 
 function piperPrefetchAhead(chapter, nextWordStart) {
@@ -458,7 +451,7 @@ function piperPrefetchAhead(chapter, nextWordStart) {
     piperPrefetchQueue.push({
       wordStart: wordPos,
       wordCount,
-      audioReady: piperMakeAudioReady(text),
+      wavPromise: piperPredict(text, state.piperVoiceId),
     });
     wordPos += wordCount;
   }
@@ -498,56 +491,71 @@ async function piperVoicePlay() {
   const sentenceStartWord = state.currentWord;
 
   try {
-    // Get a ready-to-play Audio: from prefetch queue or generate fresh
-    let audio, blobUrl;
+    // Get WAV blob: from prefetch queue or generate fresh
+    let wav;
     const prefetchIdx = piperPrefetchQueue.findIndex(p => p.wordStart === sentenceStartWord);
     if (prefetchIdx !== -1) {
-      ({ audio, blobUrl } = await piperPrefetchQueue[prefetchIdx].audioReady);
+      wav = await piperPrefetchQueue[prefetchIdx].wavPromise;
       piperPrefetchQueue.splice(prefetchIdx, 1);
     } else {
       piperPrefetchQueue = [];
-      ({ audio, blobUrl } = await piperMakeAudioReady(text));
+      wav = await piperPredict(text, state.piperVoiceId);
     }
 
-    if (state.piperAbort || !state.playing) {
-      URL.revokeObjectURL(blobUrl);
-      return;
-    }
+    if (state.piperAbort || !state.playing) return;
 
     // Prefetch next 2 sentences while this one plays
     piperPrefetchAhead(chapter, sentenceStartWord + wordCount);
 
+    // Reuse the persistent Audio element (created on user gesture)
+    const audio = ensurePiperAudioEl();
+    const blobUrl = URL.createObjectURL(wav);
+    audio.src = blobUrl;
     audio.playbackRate = piperPlaybackRate();
     state.piperAudio = audio;
 
     await new Promise((resolve, reject) => {
-      const duration = audio.duration / audio.playbackRate;
-      const interval = (duration / wordCount) * 1000;
-      let wordIdx = 0;
+      const onLoaded = () => {
+        const duration = audio.duration / audio.playbackRate;
+        const interval = (duration / wordCount) * 1000;
+        let wordIdx = 0;
 
-      state.piperWordTimer = setInterval(() => {
-        if (wordIdx < wordCount) {
-          state.currentWord = sentenceStartWord + wordIdx;
-          showCurrentWord();
-          wordIdx++;
-        }
-      }, interval);
+        state.piperWordTimer = setInterval(() => {
+          if (wordIdx < wordCount) {
+            state.currentWord = sentenceStartWord + wordIdx;
+            showCurrentWord();
+            wordIdx++;
+          }
+        }, interval);
 
-      audio.addEventListener('ended', () => {
+        audio.play().catch(reject);
+      };
+
+      const onEnded = () => {
+        cleanup();
         clearInterval(state.piperWordTimer);
         state.piperWordTimer = null;
         URL.revokeObjectURL(blobUrl);
         resolve();
-      });
+      };
 
-      audio.addEventListener('error', (e) => {
+      const onError = () => {
+        cleanup();
         clearInterval(state.piperWordTimer);
         URL.revokeObjectURL(blobUrl);
         reject(new Error('Audio playback error'));
-      });
+      };
 
-      // Audio is already decoded — play immediately
-      audio.play().catch(reject);
+      const cleanup = () => {
+        audio.removeEventListener('loadedmetadata', onLoaded);
+        audio.removeEventListener('ended', onEnded);
+        audio.removeEventListener('error', onError);
+      };
+
+      audio.addEventListener('loadedmetadata', onLoaded, { once: true });
+      audio.addEventListener('ended', onEnded, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+      audio.load();
     });
 
     if (!state.playing || state.piperAbort) return;
@@ -569,7 +577,7 @@ function piperVoiceStop() {
   state.piperWordTimer = null;
   if (state.piperAudio) {
     state.piperAudio.pause();
-    state.piperAudio.src = '';
+    state.piperAudio.removeAttribute('src');
     state.piperAudio = null;
   }
 }
@@ -912,6 +920,8 @@ function unlockAudio() {
   src.connect(ctx.destination);
   src.start(0);
   ctx.resume();
+  // Create persistent Piper Audio element during user gesture for Safari
+  ensurePiperAudioEl();
 }
 
 function play() {
