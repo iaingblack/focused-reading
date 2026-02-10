@@ -380,20 +380,29 @@ async function downloadPiperVoice() {
   }
 }
 
-// Prefetch cache for next sentence audio
-let piperPrefetch = null;
+// Prefetch queue for upcoming sentence audio (up to 2 ahead)
+let piperPrefetchQueue = [];
 
-function piperPrefetchNext(tts, chapter, nextWordStart) {
-  if (nextWordStart >= chapter.words.length) {
-    piperPrefetch = null;
-    return;
+function piperPrefetchAhead(tts, chapter, nextWordStart) {
+  // Clear any stale prefetches
+  piperPrefetchQueue = piperPrefetchQueue.filter(p => p.wordStart >= nextWordStart);
+
+  let wordPos = nextWordStart;
+  while (piperPrefetchQueue.length < 2 && wordPos < chapter.words.length) {
+    // Skip if already queued
+    if (piperPrefetchQueue.some(p => p.wordStart === wordPos)) {
+      const existing = piperPrefetchQueue.find(p => p.wordStart === wordPos);
+      wordPos = existing.wordStart + existing.wordCount;
+      continue;
+    }
+    const { text, wordCount } = collectSentence(chapter, wordPos);
+    piperPrefetchQueue.push({
+      wordStart: wordPos,
+      wordCount,
+      promise: tts.predict({ text, voiceId: state.piperVoiceId }),
+    });
+    wordPos += wordCount;
   }
-  const { text, wordCount } = collectSentence(chapter, nextWordStart);
-  piperPrefetch = {
-    wordStart: nextWordStart,
-    wordCount,
-    promise: tts.predict({ text, voiceId: state.piperVoiceId }),
-  };
 }
 
 async function piperVoicePlay() {
@@ -416,7 +425,7 @@ async function piperVoicePlay() {
       state.currentChapter++;
       state.currentWord = 0;
       renderChapterList();
-      piperPrefetch = null;
+      piperPrefetchQueue = [];
       piperVoicePlay();
       return;
     } else {
@@ -434,18 +443,19 @@ async function piperVoicePlay() {
 
     // Use prefetched audio if available and matches, otherwise generate
     let wav;
-    if (piperPrefetch && piperPrefetch.wordStart === sentenceStartWord) {
-      wav = await piperPrefetch.promise;
-      piperPrefetch = null;
+    const prefetchIdx = piperPrefetchQueue.findIndex(p => p.wordStart === sentenceStartWord);
+    if (prefetchIdx !== -1) {
+      wav = await piperPrefetchQueue[prefetchIdx].promise;
+      piperPrefetchQueue.splice(prefetchIdx, 1);
     } else {
-      piperPrefetch = null;
+      piperPrefetchQueue = [];
       wav = await tts.predict({ text, voiceId: state.piperVoiceId });
     }
 
     if (state.piperAbort || !state.playing) return;
 
-    // Start prefetching the next sentence while this one plays
-    piperPrefetchNext(tts, chapter, sentenceStartWord + wordCount);
+    // Prefetch next 2 sentences while this one plays
+    piperPrefetchAhead(tts, chapter, sentenceStartWord + wordCount);
 
     const blobUrl = URL.createObjectURL(wav);
     const audio = new Audio(blobUrl);
@@ -497,7 +507,7 @@ async function piperVoicePlay() {
 
 function piperVoiceStop() {
   state.piperAbort = true;
-  piperPrefetch = null;
+  piperPrefetchQueue = [];
   clearInterval(state.piperWordTimer);
   state.piperWordTimer = null;
   if (state.piperAudio) {
