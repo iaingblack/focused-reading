@@ -4,11 +4,7 @@ let requestId = 0;
 
 async function loadTts() {
   if (tts) return tts;
-  try {
-    tts = await import('./piper-tts-web.js');
-  } catch (_) {
-    tts = await import('https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/dist/piper-tts-web.js');
-  }
+  tts = await import('./piper-tts-web.js');
   return tts;
 }
 
