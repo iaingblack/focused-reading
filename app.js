@@ -380,16 +380,31 @@ async function downloadPiperVoice() {
   }
 }
 
-// Prefetch queue for upcoming sentence audio (up to 2 ahead)
+// Prefetch queue: each entry has { wordStart, wordCount, audioReady }
+// audioReady is a promise that resolves to { audio, blobUrl } — fully decoded and ready to play
 let piperPrefetchQueue = [];
 
+function piperMakeAudioReady(tts, text, wordCount) {
+  // Chain: predict → create Audio → wait for it to be decoded — all as one promise
+  return tts.predict({ text, voiceId: state.piperVoiceId }).then(wav => {
+    const blobUrl = URL.createObjectURL(wav);
+    const audio = new Audio(blobUrl);
+    audio.playbackRate = piperPlaybackRate();
+    // Preload so the browser decodes the WAV before we need it
+    audio.preload = 'auto';
+    return new Promise((resolve, reject) => {
+      audio.addEventListener('canplaythrough', () => resolve({ audio, blobUrl }), { once: true });
+      audio.addEventListener('error', () => { URL.revokeObjectURL(blobUrl); reject(new Error('Audio decode error')); }, { once: true });
+      audio.load();
+    });
+  });
+}
+
 function piperPrefetchAhead(tts, chapter, nextWordStart) {
-  // Clear any stale prefetches
   piperPrefetchQueue = piperPrefetchQueue.filter(p => p.wordStart >= nextWordStart);
 
   let wordPos = nextWordStart;
   while (piperPrefetchQueue.length < 2 && wordPos < chapter.words.length) {
-    // Skip if already queued
     if (piperPrefetchQueue.some(p => p.wordStart === wordPos)) {
       const existing = piperPrefetchQueue.find(p => p.wordStart === wordPos);
       wordPos = existing.wordStart + existing.wordCount;
@@ -399,7 +414,7 @@ function piperPrefetchAhead(tts, chapter, nextWordStart) {
     piperPrefetchQueue.push({
       wordStart: wordPos,
       wordCount,
-      promise: tts.predict({ text, voiceId: state.piperVoiceId }),
+      audioReady: piperMakeAudioReady(tts, text, wordCount),
     });
     wordPos += wordCount;
   }
@@ -441,41 +456,40 @@ async function piperVoicePlay() {
   try {
     const tts = await loadPiperModule();
 
-    // Use prefetched audio if available and matches, otherwise generate
-    let wav;
+    // Get a ready-to-play Audio: from prefetch queue or generate fresh
+    let audio, blobUrl;
     const prefetchIdx = piperPrefetchQueue.findIndex(p => p.wordStart === sentenceStartWord);
     if (prefetchIdx !== -1) {
-      wav = await piperPrefetchQueue[prefetchIdx].promise;
+      ({ audio, blobUrl } = await piperPrefetchQueue[prefetchIdx].audioReady);
       piperPrefetchQueue.splice(prefetchIdx, 1);
     } else {
       piperPrefetchQueue = [];
-      wav = await tts.predict({ text, voiceId: state.piperVoiceId });
+      ({ audio, blobUrl } = await piperMakeAudioReady(tts, text, wordCount));
     }
 
-    if (state.piperAbort || !state.playing) return;
+    if (state.piperAbort || !state.playing) {
+      URL.revokeObjectURL(blobUrl);
+      return;
+    }
 
     // Prefetch next 2 sentences while this one plays
     piperPrefetchAhead(tts, chapter, sentenceStartWord + wordCount);
 
-    const blobUrl = URL.createObjectURL(wav);
-    const audio = new Audio(blobUrl);
     audio.playbackRate = piperPlaybackRate();
     state.piperAudio = audio;
 
     await new Promise((resolve, reject) => {
-      audio.addEventListener('loadedmetadata', () => {
-        const duration = audio.duration / audio.playbackRate;
-        const interval = (duration / wordCount) * 1000;
-        let wordIdx = 0;
+      const duration = audio.duration / audio.playbackRate;
+      const interval = (duration / wordCount) * 1000;
+      let wordIdx = 0;
 
-        state.piperWordTimer = setInterval(() => {
-          if (wordIdx < wordCount) {
-            state.currentWord = sentenceStartWord + wordIdx;
-            showCurrentWord();
-            wordIdx++;
-          }
-        }, interval);
-      });
+      state.piperWordTimer = setInterval(() => {
+        if (wordIdx < wordCount) {
+          state.currentWord = sentenceStartWord + wordIdx;
+          showCurrentWord();
+          wordIdx++;
+        }
+      }, interval);
 
       audio.addEventListener('ended', () => {
         clearInterval(state.piperWordTimer);
@@ -490,6 +504,7 @@ async function piperVoicePlay() {
         reject(new Error('Audio playback error'));
       });
 
+      // Audio is already decoded — play immediately
       audio.play().catch(reject);
     });
 
