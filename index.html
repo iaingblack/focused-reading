@@ -55,16 +55,9 @@
             <li><strong>Piper</strong> &mdash; Neural TTS running in the browser via ONNX. Requires downloading a voice model (~63MB). Higher CPU usage with pauses between sentences.</li>
           </ul>
 
-          <h3>Enabling High-Quality macOS Voices</h3>
-          <p>macOS includes basic system voices by default, but much better Siri and Enhanced voices are available for free:</p>
-          <ol>
-            <li>Open <strong>System Settings</strong> &rarr; <strong>Accessibility</strong> &rarr; <strong>Spoken Content</strong></li>
-            <li>Click <strong>System Voices...</strong></li>
-            <li>Find voices marked <strong>Siri</strong> or <strong>Enhanced</strong> (e.g. "Samantha (Enhanced)")</li>
-            <li>Click the download button next to the ones you want</li>
-            <li>Once downloaded, they appear automatically in the Browser voice dropdown</li>
-          </ol>
-          <p>Siri voices are high quality, natural sounding, and have no processing delay.</p>
+          <h3>Browser Voice Note</h3>
+          <p>Browser TTS uses the Web Speech API, which only exposes basic system voices (Samantha, Daniel). macOS Enhanced and Siri voices are not available through this API in any browser.</p>
+          <p>For higher quality narration, use <strong>Piper</strong> mode which runs a neural TTS model directly in the browser.</p>
 
           <h3>Text Panel</h3>
           <p>Press <kbd>T</kbd> or click the button at the top-right of the reader to open a side panel showing the full chapter text. The current word is highlighted and auto-scrolls as you read.</p>

@@ -201,18 +201,21 @@ async function loadReadingPosition(id) {
 // ── Browser Voice (Web Speech API) ──
 const synth = window.speechSynthesis;
 
+const BROWSER_VOICE_ALLOW = new Set(['Samantha', 'Daniel']);
+
 function populateVoices() {
   const voices = synth.getVoices();
   voiceSelect.innerHTML = '';
-  voices.forEach(voice => {
+  const allowed = voices.filter(v => BROWSER_VOICE_ALLOW.has(v.name));
+  allowed.forEach(voice => {
     const opt = document.createElement('option');
     opt.value = voice.name;
     opt.textContent = `${voice.name} (${voice.lang})`;
     if (voice.default) opt.selected = true;
     voiceSelect.appendChild(opt);
   });
-  if (voices.length > 0 && !state.selectedVoice) {
-    state.selectedVoice = voices[0];
+  if (allowed.length > 0 && !state.selectedVoice) {
+    state.selectedVoice = allowed[0];
   }
 }
 
